@@ -120,39 +120,45 @@
       }
 
     } else {
+      var startJs = 'app/start.js';
+      // make process.argv[1] into a full path
+      var path = NativeModule.require('path');
+      process.argv[1] = path.resolve(startJs);
+
+      // If this is a worker in cluster mode, start up the communiction
+      // channel.
+      if (process.env.NODE_UNIQUE_ID) {
+        var cluster = NativeModule.require('cluster');
+        cluster._setupWorker();
+
+        // Make sure it's not accidentally inherited by child processes.
+        delete process.env.NODE_UNIQUE_ID;
+      }
+
       var Module = NativeModule.require('module');
 
-      // If -i or --interactive were passed, or stdin is a TTY.
-      if (process._forceRepl || NativeModule.require('tty').isatty(0)) {
-        // REPL
-        var opts = {
-          useGlobal: true,
-          ignoreUndefined: false
-        };
-        if (parseInt(process.env['NODE_NO_READLINE'], 10)) {
-          opts.terminal = false;
-        }
-        if (parseInt(process.env['NODE_DISABLE_COLORS'], 10)) {
-          opts.useColors = false;
-        }
-        var repl = Module.requireRepl().start(opts);
-        repl.on('exit', function() {
-          process.exit();
-        });
+      if (global.v8debug &&
+          process.execArgv.some(function(arg) {
+            return arg.match(/^--debug-brk(=[0-9]*)?$/);
+          })) {
+
+        // XXX Fix this terrible hack!
+        //
+        // Give the client program a few ticks to connect.
+        // Otherwise, there's a race condition where `node debug foo.js`
+        // will not be able to connect in time to catch the first
+        // breakpoint message on line 1.
+        //
+        // A better fix would be to somehow get a message from the
+        // global.v8debug object about a connection, and runMain when
+        // that occurs.  --isaacs
+
+        var debugTimeout = +process.env.NODE_DEBUG_TIMEOUT || 50;
+        setTimeout(Module.runMain, debugTimeout);
 
       } else {
-        // Read all of stdin - execute it.
-        process.stdin.setEncoding('utf8');
-
-        var code = '';
-        process.stdin.on('data', function(d) {
-          code += d;
-        });
-
-        process.stdin.on('end', function() {
-          process._eval = code;
-          evalScript('[stdin]');
-        });
+        // Main entry point into most programs:
+        Module.runMain();
       }
     }
   }
